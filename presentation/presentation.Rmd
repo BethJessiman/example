@@ -1,0 +1,533 @@
+---
+title: "Modelling of Strokes"
+subtitle: "With respect to health and lifestyle"
+author: "2021 IDS team"
+institute: "University of Edinburgh"
+date: "`r Sys.Date()`"
+output:
+  xaringan::moon_reader:
+    css: 
+      - xaringan-themer.css
+      - "https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.7.0/animate.min.css" 
+    lib_dir: libs
+    nature:
+      ratio: "16:9"
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages, include = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(xaringanthemer)
+library(ggridges)
+library(broom)
+library(janitor)
+library(AICcmodavg)
+library(kableExtra)
+library(caret)
+#devtools::install_github("gadenbuie/xaringanExtra")
+```
+
+```{r setup, include=FALSE}
+# For better figure resolution
+knitr::opts_chunk$set(fig.retina = 3, dpi = 300, fig.width = 6, fig.asp = 0.618, out.width = "80%")
+```
+
+```{r load-data, include=FALSE}
+stroke_risk <- read.csv(here::here("data/healthcare-dataset-stroke-data.csv"))
+stroke_risk <- stroke_risk %>%
+  filter(age >= 16, gender != "Other") %>%
+  mutate(
+    #hypertension = if_else(hypertension == 1, TRUE, FALSE),
+    #heart_disease = if_else(heart_disease == 1, TRUE, FALSE),
+    #stroke = if_else(stroke == 1, TRUE, FALSE),
+    #ever_married = if_else(ever_married == "Yes", TRUE, FALSE),
+    work_type = case_when(
+      work_type == "Never_worked" ~ "Never worked",
+      work_type == "Govt_job" ~ "Govt job",
+      TRUE ~ work_type
+    ),
+    bmi = if_else(bmi == "N/A", NA_real_, as.numeric(bmi)),
+    work_type = if_else(work_type == "children", "Never worked", work_type)
+  ) %>%
+clean_names()
+```
+
+```{r styling, include=FALSE, echo=FALSE}
+style_xaringan(
+  background_image = "fire.gif",
+  background_position = "top right",
+  background_size = "150px 160px",
+  title_slide_background_color = "#000",
+  code_inline_background_color = "#000",
+  code_inline_color = "#FFF",
+  text_color = "#FFF",
+  header_color = "#FFF",
+  background_color = "#000",
+  extra_css = list(
+    ".r.hljs.remark-code" = list(
+      "background-color" = "#000", 
+      "color" = "#FFF",
+      "font-size" = "30px"
+    ),
+    "th, td" = list(
+      "border" = "2px solid black",
+      "border-color" = "#FFF",
+      "background-color" = "#333",
+      "color" = "#FFF"
+    )
+  )
+)
+```
+
+class: center, middle, red, animated, slideInRight
+
+# Disclaimer, we are not medical professionals
+
+---
+
+class: animated, slideInRight
+
+# What is a stroke?
+
+## A stroke is a potentially deadly condition where the blood supply is cut off from the brain.
+
+---
+
+class: animated, slideInRight
+
+# Hypothesis
+
+## Do factors such as age, hypertension and BMI increase the risk of a stroke?
+
+---
+
+class: animated, slideInRight
+
+# Our dataset
+
+```{r view-dataset}
+glimpse(stroke_risk)
+```
+
+---
+
+class: animated, slideInRight
+
+# Method
+
+* Remove all individuals from age 15 and below to investigate stoke risk in adults.
+<br><br><br>
+* Simple density graph to see what value of blood glucose the number of stokes increases at.
+<br><br><br>
+* Simple statistics to find the average age of people having had stroke in our dataset. 
+<br><br><br>
+* Logistic regression model using; age, heart disease, hypertension, average blood glucose level, gender and BMI.
+
+---
+
+class: center, middle, animated, slideInRight
+
+# Introductory plots
+
+---
+
+class: animated, slideInRight
+
+## Average Blood Glucose Level Split by Stroke
+
+.left-column[
+* Two ridges peak at two different places.
+<br><br>
+* First peak at an average glucose level of 80mg/dl, those who did not have a stroke peaked higher.
+<br><br>
+* Second peak peaked at an average glucose level of 210 mg/dl, those who had a stroke peaked higher.
+<br><br>
+* Possible link between high blood glucose levels and an increased stroke risk4.
+]
+
+.right-column[
+```{r plot-1, echo=FALSE, cache=TRUE}
+stroke_risk %>%
+  mutate(stroke = if_else(stroke == TRUE, "Yes", "No"), stroke = fct_rev(stroke)) %>%
+  ggplot(aes(x = avg_glucose_level, y = stroke, fill = stroke)) +
+  geom_density_ridges(bandwidth = 11.4) +
+  labs(
+    x = "Average Blood Glucose Level (mg/dl)",
+    y = "Stroke"
+  ) +
+  scale_fill_manual(values = c("Purple", "Orange")) +
+  theme(
+    legend.position = "none",
+    text = element_text(colour = "white", size = 15),
+    rect = element_rect(fill = "black", colour = "white"),
+    panel.background = element_rect(fill = "black"),
+    panel.grid.minor = element_line(colour = "white"),
+    axis.text = element_text(colour = "white")
+  )
+```
+]
+---
+
+class: animated, slideInRight
+
+## The Average Age of Patients who have had a Stroke
+
+.left-column[
+* Average of 71 for individuals who have had a stroke.
+<br><br>
+* Average of 49 for individuals who haven't had a stroke.
+<br><br>
+* 22 year difference.
+<br><br>
+* Consistent with the known and proven link between increased age and a higher stroke risk.
+]
+
+.right-column[
+```{r plot-2, echo = FALSE, cache=TRUE}
+median_age_stroke <- stroke_risk %>%
+  mutate(stroke = if_else(stroke == TRUE, "Yes", "No"), stroke = fct_rev(stroke)) %>%
+  group_by(stroke) %>%
+  summarise(median_age = median(age))
+
+median_age_stroke %>%
+  ggplot(aes(stroke, median_age, fill = stroke)) +
+  geom_col() +
+  scale_fill_manual(values = c("Purple", "Orange")) +
+  labs(
+    x = "Stroke", 
+    y = "Median Age",
+    fill = "Stroke"
+  ) +
+  theme(
+    legend.position = "none",
+    text = element_text(colour = "white", size = 15),
+    rect = element_rect(fill = "black", colour = "white"),
+    panel.background = element_rect(fill = "black"),
+    axis.text = element_text(colour = "white")
+  )
+```
+]
+
+---
+
+class: animated, slideInRight
+
+# Modelling
+
+* We expected a high BMI and having hypertension to increase stroke risk the most. 
+
+* We found that age and hypertension increase stroke risk the most.
+
+```{r findings, echo=FALSE}
+cutoff_prob <- 0.1
+
+stroke_risk <- stroke_risk %>%
+    filter(!(is.na(bmi))) %>%
+    mutate(stroke = factor(stroke)) 
+
+logit2prob <- function(logit){
+  odds <- exp(logit)
+  prob <- (odds / (1 + odds)) * 100
+  return(prob)
+}
+
+set.seed(16)
+
+stroke_split <- initial_split(stroke_risk, prop = 0.8)
+
+train_data <- training(stroke_split)
+test_data  <- testing(stroke_split)
+
+stroke_rec <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, work_type, residence_type, smoking_status, ever_married) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_fit_base <- logistic_reg() %>%
+  set_engine("glm")
+
+stroke_wflow <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec)
+
+stroke_fit <- stroke_wflow %>%
+  fit(data = train_data)
+
+stroke_pred <- predict(stroke_fit, test_data, type = "prob") %>% 
+  bind_cols(test_data %>% select(stroke))
+
+stroke_pred_accuracy <- stroke_pred %>% 
+  mutate(
+    stroke_pred = if_else(.pred_1 > cutoff_prob, 1, 0)
+    )
+
+tidy(stroke_fit) %>%
+  kable(col.names = c("Term","Estimate","STD Error", "Statistic","P Value")) %>%
+  kable_minimal()
+```
+
+---
+
+class: animated, slideInRight
+
+# ROC and Accuracy
+
+.pull-left[
+* The accuracy of the model is 82.9% - which measures how well our model identified if people had a stroke or not.
+<br><br>
+* The AUC is 81.6% meaning the model is better at distinguishing between people who have had a stroke and those who have not.
+<br><br>
+* We also did 10 fold cross validation to avoid over fitting, we got the average accuracy of as 95% and average AUC as 82.6%.
+]
+
+.pull-right[
+```{r roc, echo=FALSE}
+stroke_pred_accuracy %>%                
+  accuracy(truth = stroke, factor(stroke_pred)) %>%
+  kable(col.names = c("Metric","Estimator","Estimate")) %>%
+  kable_minimal()
+```
+<br><br>
+```{r accuracy, echo=FALSE}
+stroke_pred %>%
+  roc_auc(
+    truth = stroke,
+    .pred_1,
+    event_level = "second"
+  ) %>%
+  kable(col.names = c("Metric","Estimator","Estimate"), format = "html") %>%
+  kable_minimal()
+```
+<br><br>
+```{r folds, echo=FALSE}
+folds <- vfold_cv(train_data, v = 10)
+
+stroke_fit_rs <- stroke_wflow %>%
+  fit_resamples(folds)
+
+collect_metrics(stroke_fit_rs) %>%
+  select(.metric, .estimator, mean) %>%
+  kable(col.names = c("Metric", "Estimator", "Mean")) %>%
+  kable_minimal()
+```
+]
+---
+
+class: animated, slideInRight
+
+# AIC
+
+.pull-left[
+* Base model uses the variables: age, hypertension, heart disease, gender, BMI and average glucose level.
+<br><br>
+* We used the Akaike Information Criterion (AIC) to find the least amount of variables needed to explain the greatest amount of variation in the data.
+<br><br>
+* We found that the base model performed well.
+<br><br>
+* We did not remove gender despite the AIC being preferable because the sensitivity of our model fell by 32.5%.
+]
+
+.pull-left[
+```{r aic, echo=FALSE}
+stroke_rec_2 <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, residence_type, smoking_status, ever_married) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_wflow_2 <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec_2)
+
+stroke_fit_2 <- stroke_wflow_2 %>%
+  fit(data = train_data)
+
+stroke_rec_3 <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, work_type, smoking_status, ever_married) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_wflow_3 <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec_3)
+
+stroke_fit_3 <- stroke_wflow_3 %>%
+  fit(data = train_data)
+
+stroke_rec_4 <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, work_type, residence_type, ever_married) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_wflow_4 <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec_4)
+
+stroke_fit_4 <- stroke_wflow_4 %>%
+  fit(data = train_data)
+
+stroke_rec_5 <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, work_type, residence_type, smoking_status) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_wflow_5 <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec_5)
+
+stroke_fit_5 <- stroke_wflow_5 %>%
+  fit(data = train_data)
+
+stroke_rec_6 <- recipe(stroke  ~ ., data = train_data) %>%
+  step_rm(id, work_type, residence_type, smoking_status, ever_married, gender) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_zv(all_predictors())
+
+stroke_wflow_6 <- workflow() %>%
+  add_model(stroke_fit_base) %>%
+  add_recipe(stroke_rec_6)
+
+stroke_fit_6 <- stroke_wflow_6 %>%
+  fit(data = train_data)
+
+mdoels = list(stroke_fit, stroke_fit_2, stroke_fit_3, stroke_fit_4, stroke_fit_5, stroke_fit_6)
+
+AIC_determiner <- function(x) 
+{
+ glance(x)$AIC 
+}
+
+tibble(
+  Model = c(
+    "Base", 
+    "Base & Worktype", 
+    "Base & Residence Type", 
+    "Base & Smoking Status", 
+    "Base & Ever Married", 
+    "Base without Gender"),
+  AIC = c(
+    AIC_determiner(stroke_fit),
+    AIC_determiner(stroke_fit_2),
+    AIC_determiner(stroke_fit_3),
+    AIC_determiner(stroke_fit_4),
+    AIC_determiner(stroke_fit_5),
+    AIC_determiner(stroke_fit_6)
+  )
+) %>%
+kable(col.names = c("Model", "AIC"), format = "html")
+```
+]
+---
+
+class: animated, slideInRight
+
+# Sensitivity and Specificity
+
+* We decided on a low cut-off probability to reduce the false negative rate. 
+<br>
+* This is because the cost of a false negative result as compared to a false positive result is significantly higher
+
+```{r prediction, echo=FALSE}
+stroke_pred %>%
+  mutate(
+    stroke      = if_else(stroke == 1, 
+                          "Did have a storke", 
+                          "Did not have a stroke"),
+    stroke_pred = if_else(.pred_1 > cutoff_prob, 
+                          "Predicted to have a stroke", 
+                          "Predicted to not have a stroke")
+    ) %>%
+  count(stroke_pred, stroke) %>%
+  pivot_wider(names_from = stroke, values_from = n) %>%
+  kable(col.names = c("Prediction", "Person has had a stroke", "Person has not had a stroke"), format = "html") %>%
+  kable_minimal()
+```
+<br>
+```{r sensitivity, echo=FALSE}
+stroke_pred_table <- stroke_pred %>%
+  mutate(
+    stroke      = if_else(stroke == 1, "1","0"),
+    stroke_pred = if_else(.pred_1 > cutoff_prob, "1", "0"),
+    stroke = factor(stroke),
+    stroke_pred = factor(stroke_pred)
+    ) %>%
+  count(stroke_pred, stroke)
+stroke_pred_table %>%
+  filter(stroke == 1) %>%
+  pivot_wider(names_from = stroke_pred, values_from = n) %>%
+  summarise(sensitivity = (`1`/(`0`+`1`))) %>%
+  kable(col.names = c("Sensitivity"))
+```
+<br>
+```{r specificity, echo=FALSE}
+stroke_pred_table %>%
+  filter(stroke == 0) %>%
+  pivot_wider(names_from = stroke_pred, values_from = n) %>%
+  summarise(specificity = (`0`/(`0`+`1`))) %>%
+  kable(col.names = c("Specificity"))
+```
+
+---
+
+class: animated, slideInRight
+
+# Limitations
+
+* BMI is not an accurate reflection of a person's health.
+
+* We don’t have data on
+
+  * other health conditions that can increase risk e.g. sickle cell disease.
+  
+  * what medication the participants are on.
+
+  * physical activity.
+
+  * alcohol consumption.
+
+  * ethnicity.
+
+  * family history of strokes.
+
+  * second-hand smoking exposure.
+  
+---
+
+class: animated, slideInRight
+
+# Evaluation
+
+* We were able to confirm our hypothesis about a link between age and stroke risk.
+<br><br>
+* This is because as age increases, arteries become narrower and the walls become harder which increases the risk of them becoming blocked causing strokes.
+<br><br>
+* Therefore, we can confirm that age is a factor in stroke risk.
+<br><br>
+* Since we see a slight link in our dataset between high blood glucose and stroke risk this also confirms our hypothesis and confirms what is known outside our dataset. High blood glucose levels often cause diabetes which increases risk of cardiovascular disease which significantly increases risk of strokes.
+
+---
+
+class: animated, slideInRight
+
+# Evaluation
+
+* We were able to confirm that hypertension did increase risk, but we were wrong on BMI increasing risk the most, age is a bigger factor.
+<br><br>
+* The model struggles at predicting if people will have a stroke because the sample size is far too small to make accurate predictions.
+<br><br>
+* We think it’s better if our model has a higher sensitivity to reduce the false negatives instead of focusing on specificity to reduce the false positives because in a real-world application, false positives would at best cause panic whereas false negatives will cause people to be less aware of the risks.
+<br><br>
+* We are aware that false positives are not ideal because we don’t want to cause people panic but our data on those who had a stroke is too small, so we had to decide what we prioritize.
+<br><br>
+* We are also aware that by doing this, it will decrease the accuracy, but it aligns with our goal of detecting strokes.
+
+---
+
+class: center, middle, animated, slideInRight
+
+# Thank you
